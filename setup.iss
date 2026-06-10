@@ -29,7 +29,7 @@ Source: "wsl\local-http-proxy.py";                    DestDir: "{app}\wsl";     
 Source: "wsl\start-proxy.sh";                         DestDir: "{app}\wsl";             Flags: ignoreversion
 Source: "scripts\chrome-extension-update-server.ps1"; DestDir: "{app}\scripts";         Flags: ignoreversion
 Source: "scripts\proxy-control.ps1";                  DestDir: "{app}\scripts";         Flags: ignoreversion
-Source: "chrome-extension.crx";                       DestDir: "{app}\ChromeExtension"; DestName: "wsl-proxy-toggle.crx"; Flags: ignoreversion
+Source: "chrome-extension.crx";                       DestDir: "{app}";                 Flags: ignoreversion
 Source: "Install.ps1";                                DestDir: "{app}";                 Flags: ignoreversion
 Source: "Uninstall.ps1";                              DestDir: "{app}";                 Flags: ignoreversion
 Source: "VERSION";                                    DestDir: "{app}";                 Flags: ignoreversion

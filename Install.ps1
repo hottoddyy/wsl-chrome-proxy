@@ -84,9 +84,11 @@ function Write-Fail {
 function Test-WslDistro {
     param([string]$Name)
     try {
-        $list = & wsl.exe --list --quiet 2>&1
+        # wsl.exe emits UTF-16 output; when PowerShell reads it with the wrong
+        # encoding every other byte is a null char, so strip them before matching.
+        $list = ((& wsl.exe --list --quiet 2>&1) -join "`n") -replace "`0", ""
         if ($LASTEXITCODE -ne 0) { return $false }
-        return ($list | Where-Object { $_ -match [regex]::Escape($Name) }).Count -gt 0
+        return $list -match [regex]::Escape($Name)
     } catch { return $false }
 }
 
@@ -259,7 +261,11 @@ $copies = @(
 foreach ($c in $copies) {
     $src = Join-Path $PSScriptRoot $c.Src
     if (-not (Test-Path -LiteralPath $src)) { Write-Fail "Missing source file: $src" }
-    Copy-Item -LiteralPath $src -Destination $c.Dst -Force
+    # When run from the install dir itself (e.g. by the setup EXE), source and
+    # destination can be the same file - skip those.
+    if ((Resolve-Path -LiteralPath $src).Path -ne $c.Dst) {
+        Copy-Item -LiteralPath $src -Destination $c.Dst -Force
+    }
 }
 Write-OK "Files copied."
 
@@ -314,18 +320,59 @@ $forceList  = "$policyRoot\ExtensionInstallForcelist"
 $allowList  = "$policyRoot\ExtensionInstallAllowlist"
 $sourceList = "$policyRoot\ExtensionInstallSources"
 
-foreach ($key in @($forceList, $allowList, $sourceList)) {
-    New-Item -Path $key -Force | Out-Null
-}
-Set-ItemProperty -Path $forceList  -Name "1" -Value "$extensionId;$updateUrl"
-Set-ItemProperty -Path $allowList  -Name "1" -Value $extensionId
-Set-ItemProperty -Path $sourceList -Name "1" -Value "http://127.0.0.1/*"
-Set-ItemProperty -Path $sourceList -Name "2" -Value "http://127.0.0.1:$UpdateServerPort/*"
-
 $extSettings = @{
     $extensionId = @{ installation_mode = "force_installed"; update_url = $updateUrl }
 } | ConvertTo-Json -Compress -Depth 5
-Set-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -Value $extSettings
+
+# HKCU\Software\Policies\Google\Chrome can carry a restricted ACL when IT Group
+# Policy manages Chrome. Try the normal write first; if access is denied, do one
+# elevated pass. UAC elevation stays under the same user account, so HKCU still
+# refers to this user's hive.
+$policyWritten = $false
+try {
+    foreach ($key in @($forceList, $allowList, $sourceList)) {
+        New-Item -Path $key -Force -ErrorAction Stop | Out-Null
+    }
+    Set-ItemProperty -Path $forceList  -Name "1" -Value "$extensionId;$updateUrl" -ErrorAction Stop
+    Set-ItemProperty -Path $allowList  -Name "1" -Value $extensionId -ErrorAction Stop
+    Set-ItemProperty -Path $sourceList -Name "1" -Value "http://127.0.0.1/*" -ErrorAction Stop
+    Set-ItemProperty -Path $sourceList -Name "2" -Value "http://127.0.0.1:$UpdateServerPort/*" -ErrorAction Stop
+    Set-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -Value $extSettings -ErrorAction Stop
+    $policyWritten = $true
+} catch {
+    Write-Warn "Chrome policy key is access-restricted (IT-managed). Elevating for this step..."
+}
+
+if (-not $policyWritten) {
+    # Quoting JSON through reg.exe / -Command is unreliable; write a temp script
+    # and run it elevated with -File instead. Set-ItemProperty keeps the JSON
+    # string intact (reg.exe strips the quote characters).
+    $elevScript = Join-Path $installRoot "write-policy-elevated.ps1"
+    @"
+`$ErrorActionPreference = "Stop"
+foreach (`$key in @(
+    "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallForcelist",
+    "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallAllowlist",
+    "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallSources"
+)) {
+    if (-not (Test-Path `$key)) { New-Item -Path `$key -Force | Out-Null }
+}
+Set-ItemProperty -Path "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallForcelist" -Name "1" -Value "$extensionId;$updateUrl"
+Set-ItemProperty -Path "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallAllowlist" -Name "1" -Value "$extensionId"
+Set-ItemProperty -Path "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallSources" -Name "1" -Value "http://127.0.0.1/*"
+Set-ItemProperty -Path "HKCU:\Software\Policies\Google\Chrome\ExtensionInstallSources" -Name "2" -Value "http://127.0.0.1:$UpdateServerPort/*"
+Set-ItemProperty -Path "HKCU:\Software\Policies\Google\Chrome" -Name "ExtensionSettings" -Value '$extSettings'
+exit 0
+"@ | Set-Content -LiteralPath $elevScript -Encoding ASCII
+
+    $proc = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$elevScript`""
+    )
+    Remove-Item -LiteralPath $elevScript -Force -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -ne 0) {
+        Write-Fail "Could not write the Chrome extension policy, even elevated. Check with your IT admin."
+    }
+}
 Write-OK "Chrome will install the extension automatically (no Developer mode needed)."
 
 # ?????????????????????????????????????????????????????????????????????????????
