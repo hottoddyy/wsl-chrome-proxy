@@ -30,6 +30,7 @@
 [CmdletBinding()]
 param(
     [switch]$InstallWslOnly,
+    [switch]$NoPause,
     [int]$ProxyPort        = 18080,
     [int]$UpdateServerPort = 18082,
     [string]$Distro        = "Ubuntu"
@@ -76,7 +77,7 @@ function Write-Fail {
     Write-Host ""
     Write-Host "  !! $msg" -ForegroundColor Red
     Write-Host ""
-    Read-Host "Press Enter to close"
+    if (-not $NoPause) { Read-Host "Press Enter to close" }
     exit 1
 }
 
@@ -461,4 +462,4 @@ Write-Host "    Proxy stop     stop everything" -ForegroundColor DarkGray
 Write-Host "    Proxy status   show current state" -ForegroundColor DarkGray
 Write-Host "    Proxy update   download and install latest from GitHub" -ForegroundColor DarkGray
 Write-Host ""
-Read-Host "Press Enter to close"
+if (-not $NoPause) { Read-Host "Press Enter to close" }

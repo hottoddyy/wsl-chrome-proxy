@@ -101,4 +101,4 @@ if ($autoRunValue -and $autoRunValue -match 'WSL') {
 Write-Host ""
 Write-Host "  Done. Restart Chrome to remove the extension." -ForegroundColor Green
 Write-Host ""
-Read-Host "Press Enter to close"
+if (-not $Confirm) { Read-Host "Press Enter to close" }

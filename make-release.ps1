@@ -38,6 +38,7 @@ $items = @(
     "Install.ps1",
     "Proxy.cmd",
     "Uninstall.ps1",
+    "setup.iss",
     "README.md",
     "VERSION"
 )
@@ -52,14 +53,30 @@ Compress-Archive -LiteralPath $pkgRoot -DestinationPath $zipPath -Force
 Remove-Item $tempDir -Recurse -Force
 Write-Host "Built: $zipPath  ($([int]((Get-Item $zipPath).Length/1kb)) KB)"
 
+# Build Inno Setup installer
+$iscc    = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+$exePath = Join-Path $root "WSLChromeProxy-Setup.exe"
+if (Test-Path $iscc) {
+    Write-Host "Building installer EXE..."
+    & $iscc (Join-Path $root "setup.iss") | Out-Null
+    Write-Host "Built: $exePath  ($([int]((Get-Item $exePath).Length/1kb)) KB)"
+} else {
+    Write-Host "Inno Setup not found - skipping EXE build." -ForegroundColor Yellow
+    $exePath = $null
+}
+
 # Publish to GitHub
 $gh = "C:\Program Files\GitHub CLI\gh.exe"
 if (-not (Test-Path $gh)) { $gh = "gh" }
 
 if (-not $Notes) {
-    $Notes = "Release $Tag. Download the ZIP, extract, double-click Install.cmd."
+    $Notes = "Release $Tag. Download WSLChromeProxy-Setup.exe and run it to install."
 }
 
-& $gh release create $Tag $zipPath --title $Tag --notes $Notes
+$assets = @($zipPath)
+if ($exePath -and (Test-Path $exePath)) { $assets += $exePath }
+
+& $gh release create $Tag @assets --title $Tag --notes $Notes
 Remove-Item $zipPath -Force
+if ($exePath -and (Test-Path $exePath)) { Remove-Item $exePath -Force }
 Write-Host "Released: $Tag"

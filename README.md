@@ -27,11 +27,13 @@ That's it. The installer handles everything else — WSL 2, Ubuntu, and Python 3
 
 ## Install
 
-1. Download the **[latest release ZIP](../../releases/latest)** and extract it anywhere.
-2. Double-click **`Install.cmd`**.
+1. Download **`WSLChromeProxy-Setup.exe`** from the **[latest release](../../releases/latest)**.
+2. Run it. The setup wizard installs everything per-user — no admin needed for the installer itself.
 3. If WSL needs to be set up, Windows will show a UAC prompt — accept it. The installer handles the rest.
-4. If Windows needs to reboot to finish enabling WSL, it will say so. Reboot, then run `Install.cmd` again.
+4. If Windows needs to reboot to finish enabling WSL, it will say so. Reboot, then run the setup again.
 5. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
+
+> Prefer scripts? The release also includes a ZIP — extract it and double-click `Install.cmd` instead.
 
 The proxy starts on login automatically from that point on.
 
