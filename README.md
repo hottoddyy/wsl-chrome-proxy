@@ -1,98 +1,73 @@
 # WSL Chrome Proxy
 
-Routes Chrome traffic through a lightweight HTTP/HTTPS proxy running inside WSL Ubuntu. A Chrome extension toggles the proxy on/off and installs automatically — **no Chrome Developer mode required**.
+Routes Chrome traffic through a lightweight HTTP/HTTPS proxy running inside WSL Ubuntu. A Chrome extension toggles the proxy on/off — **installs automatically, no Developer mode or admin rights required**.
 
 ## How it works
 
 ```
-Chrome → 127.0.0.1:18080 (Windows portproxy)
-       → WSL Ubuntu IP:18081 (Python HTTP/HTTPS proxy)
-       → Internet
+Chrome  →  127.0.0.1:18080  (WSL2 localhost forwarding)
+        →  Python proxy inside WSL Ubuntu (0.0.0.0:18080)
+        →  Internet
 ```
 
-- **Chrome extension** — sets Chrome's proxy to `127.0.0.1:18080` and lets you toggle it from the toolbar.
-- **Windows connector** — `netsh portproxy` forwards `127.0.0.1:18080` to the WSL Ubuntu IP.
-- **WSL proxy** — a small Python script (`wsl/local-http-proxy.py`) handles HTTP and HTTPS CONNECT inside Ubuntu.
-- **Force-install** — the extension is delivered via a local Chrome update server and a registry policy so it installs on any Chrome profile without Developer mode.
+WSL2's built-in localhost forwarding exposes any port bound inside WSL at `127.0.0.1` on Windows — no `netsh portproxy` or admin rights needed.
 
-## Prerequisites
+The Chrome extension is delivered via a local CRX update server and a Chrome registry policy written to `HKCU`, so it installs silently into any Chrome profile without enabling Developer mode.
 
-| Requirement | Notes |
+## Requirements
+
+| | |
 |---|---|
 | Windows 10 (21H2+) or Windows 11 | WSL 2 required |
-| WSL 2 with Ubuntu | Run `wsl --install -d Ubuntu` if not set up yet |
-| Python 3 in Ubuntu | Ships with Ubuntu 20.04+ — no extra install needed |
+| WSL Ubuntu distro | Run `wsl --install -d Ubuntu` once if not set up |
+| Python 3 inside Ubuntu | Included with Ubuntu 20.04+ — nothing extra to install |
 | Google Chrome | Any recent version |
 
-> If WSL features are not yet enabled, `install-all.ps1` will enable them and tell you to reboot, then run it again.
+> Setting up WSL for the first time needs admin (once). After that, everything runs as your normal user account.
 
-## Quick install
+## Install
 
-1. **Download** the [latest release ZIP](../../releases/latest) and extract it.
-2. Open **PowerShell as Administrator**.
-3. Navigate to the extracted folder and run:
+1. Download the **[latest release ZIP](../../releases/latest)** and extract it anywhere.
+2. Double-click **`Install.cmd`**.
+3. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-all.ps1
-```
-
-4. If Windows asks for a reboot (first-time WSL setup), reboot then run the same command again.
-5. **Restart Chrome** — the *WSL Proxy Toggle* extension will appear in your toolbar automatically.
-
-That's it. Open a new CMD window and type `WSL` to start the proxy, or use:
-
-```cmd
-WSL status
-WSL stop
-```
+The proxy starts on login automatically from that point on.
 
 ## What the installer does
 
-| Step | Script | What it does |
-|---|---|---|
-| 1 | `install-wsl-windows-features.ps1` | Enables WSL + Virtual Machine Platform (skipped if already enabled) |
-| 2 | `install.ps1` | Copies `WSL.cmd` to `%USERPROFILE%\bin` and adds it to your PATH |
-| 3 | `install-cmd-alias.ps1` | Adds a `doskey` alias so CMD finds `WSL` immediately in new windows |
-| 4 | `force-install-chrome-extension.ps1` | Starts the local CRX update server, writes Chrome registry policy |
-| 5 | `scripts\wsl-proxy.ps1 -Start` | Starts the Ubuntu proxy and sets up the Windows portproxy |
+- Copies files to `%LOCALAPPDATA%\WslChromeProxy\`
+- Starts a local CRX update server (port 18082) that Chrome uses to install the extension
+- Writes Chrome extension policy to `HKCU` — no admin needed
+- Starts the Python proxy inside WSL Ubuntu on port 18080
+- Adds an autostart entry to `HKCU\Run` so the proxy comes back after reboot
 
-## WSL command
+No portproxy rules. No firewall changes. No admin.
+
+## Day-to-day control
+
+From the folder where you extracted the files (or from any CMD window if you add it to PATH):
 
 ```cmd
-WSL                          start (or restart) the proxy
-WSL status                   show connector state
-WSL stop                     stop the proxy and remove the portproxy rule
-WSL -ProxyPort 18081         override the WSL-side port
-WSL -ListenPort 18080        override the Windows listen port
-WSL -Distro Ubuntu           choose a different WSL distro
+Proxy.cmd           start (or restart) the proxy
+Proxy.cmd stop      stop everything
+Proxy.cmd status    show current state
 ```
 
-## Extension without the installer
+The Chrome extension popup also lets you toggle the proxy on/off without starting/stopping the backend.
 
-If you only want the Chrome extension (and will set up the proxy yourself):
+## Uninstall
 
-**No Developer mode needed** — run `force-install-chrome-extension.ps1` from an elevated PowerShell, then restart Chrome.
-
-**With Developer mode** — go to `chrome://extensions`, enable Developer mode, click *Load unpacked*, and select the `chrome-extension` folder from this repo.
-
-## Logs and state
-
-All connector state, PID files, and logs are written to:
-
-```
-%LOCALAPPDATA%\WslChromeProxy\
-```
-
-## Build the distributable ZIP
-
-```powershell
-.\make-zip.ps1
-```
-
-Produces `wsl-chrome-proxy-installer.zip` in the parent folder, ready to hand to someone else.
+Double-click **`Uninstall.ps1`** (or run it from PowerShell). It removes the install directory, Chrome policy, and autostart entry, then asks you to restart Chrome.
 
 ## Re-packing the extension
 
-The `.pem` file is the signing key for the CRX. It is committed to this repo so the extension ID stays consistent across installs — the Chrome policy uses the ID derived from that key. If you rotate the key, update the extension ID in `force-install-chrome-extension.ps1` too.
+The `.pem` file is the signing key for the CRX. It is committed to this repo so every install produces the same extension ID — the Chrome policy uses that ID. If you change extension source files, re-pack using Chrome's built-in tool:
 
-To re-pack after changing extension source files, use Chrome's *Pack extension* tool (`chrome://extensions` → *Pack extension* → point at the `chrome-extension` folder and the `chrome-extension.pem` key file).
+1. Go to `chrome://extensions`
+2. Enable Developer mode
+3. Click *Pack extension*
+4. Source folder: `chrome-extension/`
+5. Private key file: `chrome-extension.pem`
+6. Replace `chrome-extension.crx` in the repo with the new one
+
+If you rotate the key, update `$extensionId` in `Install.ps1` too.
