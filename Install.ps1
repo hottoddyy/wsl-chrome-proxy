@@ -1,30 +1,35 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Installs WSL Chrome Proxy. Does not require Administrator.
+  Installs WSL Chrome Proxy — including WSL and Ubuntu if needed.
 
 .DESCRIPTION
-  - Copies proxy files to %LOCALAPPDATA%\WslChromeProxy\
-  - Starts a local CRX update server so Chrome can install the extension
-    without Developer mode
-  - Writes Chrome extension policy to HKCU (no admin needed)
-  - Starts the HTTP/HTTPS proxy inside WSL Ubuntu
-  - Registers an autostart entry in HKCU\Run so the proxy comes back
-    after a reboot
+  Handles everything from scratch:
+    - Installs WSL 2 + Ubuntu if not present (self-elevates for that step only,
+      then continues as the current user for all other steps)
+    - Copies proxy files to %LOCALAPPDATA%\WslChromeProxy\
+    - Starts a local CRX update server so Chrome installs the extension
+      automatically, with no Developer mode required
+    - Writes Chrome extension policy to HKCU (no admin)
+    - Starts the HTTP/HTTPS proxy inside WSL Ubuntu
+    - Registers an autostart entry so the proxy restarts after login
+
+.PARAMETER InstallWslOnly
+  Internal flag. When set the script runs elevated to install WSL + Ubuntu,
+  then exits. Do not pass this yourself.
 
 .PARAMETER ProxyPort
   Port the Python proxy listens on inside WSL (default 18080).
-  WSL2 localhost-forwarding makes this available at 127.0.0.1:<ProxyPort>
-  from Windows with no portproxy or admin rights.
 
 .PARAMETER UpdateServerPort
   Port for the local CRX HTTP server (default 18082).
 
 .PARAMETER Distro
-  WSL distro name (default Ubuntu).
+  WSL distro to use (default Ubuntu).
 #>
 [CmdletBinding()]
 param(
+    [switch]$InstallWslOnly,
     [int]$ProxyPort        = 18080,
     [int]$UpdateServerPort = 18082,
     [string]$Distro        = "Ubuntu"
@@ -32,11 +37,180 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── constants ────────────────────────────────────────────────────────────────
-$extensionId      = "apchgcioodnlnhbgdokfccpojkcanjnk"
-$extensionVersion = "1.0.0"
+# ─────────────────────────────────────────────────────────────────────────────
+#  ELEVATED PHASE  (only reached when -InstallWslOnly is passed)
+#  Installs WSL features + Ubuntu, then exits.
+#  The parent process (running as the current user) waits for this and
+#  then continues with all the HKCU / proxy steps.
+# ─────────────────────────────────────────────────────────────────────────────
+if ($InstallWslOnly) {
+    Write-Host ""
+    Write-Host "  [Elevated] Installing WSL 2 + Ubuntu..." -ForegroundColor Cyan
 
-# ── install paths ─────────────────────────────────────────────────────────────
+    # wsl --install handles enabling features + downloading Ubuntu in one go.
+    # --no-launch skips the first-run username/password prompt; the proxy
+    # runs fine as root until a user chooses to configure one.
+    $installArgs = @("--install", "-d", $Distro)
+
+    # --no-launch is supported on Windows 10 21H2+ / Windows 11
+    $wslHelp = & wsl.exe --help 2>&1
+    if ($wslHelp -match "no-launch") {
+        $installArgs += "--no-launch"
+    }
+
+    Write-Host "  Running: wsl.exe $($installArgs -join ' ')" -ForegroundColor DarkGray
+    & wsl.exe @installArgs
+
+    # Did we get here without a forced reboot? Signal success to the parent.
+    exit 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+function Write-Step { param($msg) Write-Host "  >> $msg" -ForegroundColor Cyan }
+function Write-OK   { param($msg) Write-Host "  OK $msg" -ForegroundColor Green }
+function Write-Warn { param($msg) Write-Host "   ! $msg" -ForegroundColor Yellow }
+function Write-Fail {
+    param($msg)
+    Write-Host ""
+    Write-Host "  !! $msg" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit 1
+}
+
+function Test-WslDistro {
+    param([string]$Name)
+    try {
+        $list = & wsl.exe --list --quiet 2>&1
+        if ($LASTEXITCODE -ne 0) { return $false }
+        return ($list | Where-Object { $_ -match [regex]::Escape($Name) }).Count -gt 0
+    } catch { return $false }
+}
+
+function Test-WslWorks {
+    param([string]$Name)
+    try {
+        $out = & wsl.exe -d $Name echo "ok" 2>&1
+        return ($out -join "") -match "ok"
+    } catch { return $false }
+}
+
+function ConvertTo-WslPath {
+    param([string]$WinPath)
+    $esc    = "'" + ($WinPath -replace "'", "'\''") + "'"
+    $result = (& wsl.exe -d $Distro wslpath -a $esc 2>$null | Select-Object -First 1).Trim()
+    if (-not $result) { throw "Could not convert to WSL path: $WinPath" }
+    return $result
+}
+
+function Test-PendingReboot {
+    $paths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) { return $true }
+    }
+    return $false
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HEADER
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "  WSL Chrome Proxy  -  Installer" -ForegroundColor White
+Write-Host "  ================================" -ForegroundColor DarkGray
+Write-Host ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  1. WSL + Ubuntu  (elevates only if needed)
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Checking WSL + Ubuntu..."
+
+$wslReady = Test-WslDistro $Distro
+
+if (-not $wslReady) {
+    Write-Warn "WSL Ubuntu not found. Will install it now."
+    Write-Warn "Windows will ask for Administrator permission for this step."
+    Write-Host ""
+
+    # Re-launch this script elevated with -InstallWslOnly.
+    # We pass the distro name so it installs the right one.
+    $elevatedArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "`"$PSCommandPath`"",
+        "-InstallWslOnly",
+        "-Distro", $Distro
+    )
+
+    $proc = Start-Process powershell.exe `
+        -ArgumentList $elevatedArgs `
+        -Verb RunAs `
+        -PassThru `
+        -Wait
+
+    if ($proc.ExitCode -ne 0) {
+        Write-Fail ("WSL installation did not complete successfully (exit $($proc.ExitCode)).`n" +
+                    "  If you declined the UAC prompt, run Install.cmd again and accept it.")
+    }
+
+    Write-Host ""
+
+    # Check if a reboot is now required
+    if (Test-PendingReboot) {
+        Write-Host ""
+        Write-Host "  Windows needs to reboot to finish enabling WSL." -ForegroundColor Yellow
+        Write-Host "  After rebooting, double-click Install.cmd again to complete setup." -ForegroundColor Yellow
+        Write-Host ""
+        $r = Read-Host "  Reboot now? (y/N)"
+        if ($r -match '^[yY]') {
+            Restart-Computer -Force
+        }
+        exit 0
+    }
+
+    # Give WSL a moment to finish first-time initialisation
+    Write-Host "  Waiting for Ubuntu to initialise..." -ForegroundColor DarkGray
+    $attempts = 0
+    do {
+        Start-Sleep -Seconds 3
+        $wslReady = Test-WslDistro $Distro
+        $attempts++
+    } while (-not $wslReady -and $attempts -lt 10)
+
+    if (-not $wslReady) {
+        Write-Fail ("Ubuntu was installed but is not showing up yet.`n" +
+                    "  Try closing this window and running Install.cmd again.")
+    }
+}
+
+# Verify we can actually execute commands in the distro
+if (-not (Test-WslWorks $Distro)) {
+    Write-Fail ("WSL '$Distro' is listed but cannot run commands.`n" +
+                "  Try running: wsl -d $Distro`n" +
+                "  If it asks to set up a username, complete that, then run Install.cmd again.")
+}
+
+Write-OK "WSL '$Distro' is ready."
+
+# Make sure python3 is available (it ships with Ubuntu but just in case)
+Write-Step "Checking Python 3 in WSL..."
+$pyCheck = (& wsl.exe -d $Distro sh -lc "python3 --version 2>&1" | Select-Object -First 1).Trim()
+if ($pyCheck -notmatch "Python 3") {
+    Write-Warn "python3 not found. Installing it now (this may take a minute)..."
+    & wsl.exe -d $Distro sh -lc "apt-get update -qq && apt-get install -y -qq python3 2>&1" | Out-Null
+    $pyCheck = (& wsl.exe -d $Distro sh -lc "python3 --version 2>&1" | Select-Object -First 1).Trim()
+    if ($pyCheck -notmatch "Python 3") {
+        Write-Fail "Could not install python3 inside WSL. Check your internet connection and try again."
+    }
+}
+Write-OK $pyCheck
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  2. Install directories
+# ─────────────────────────────────────────────────────────────────────────────
 $installRoot   = Join-Path $env:LOCALAPPDATA "WslChromeProxy"
 $wslDir        = Join-Path $installRoot "wsl"
 $extDir        = Join-Path $installRoot "ChromeExtension"
@@ -44,72 +218,35 @@ $scriptsDir    = Join-Path $installRoot "scripts"
 $serverPidPath = Join-Path $extDir "update-server.pid"
 $startupScript = Join-Path $installRoot "Start-WslChromeProxy.ps1"
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-function Write-Step { param($msg) Write-Host "  >> $msg" -ForegroundColor Cyan }
-function Write-OK   { param($msg) Write-Host "  OK $msg" -ForegroundColor Green }
-function Write-Warn { param($msg) Write-Host "   ! $msg" -ForegroundColor Yellow }
-function Write-Fail {
-    param($msg)
-    Write-Host "  !! $msg" -ForegroundColor Red
-    Write-Host ""
-    Read-Host "Press Enter to close"
-    exit 1
-}
+$extensionId      = "apchgcioodnlnhbgdokfccpojkcanjnk"
+$extensionVersion = "1.0.0"
 
-# ── header ────────────────────────────────────────────────────────────────────
-Write-Host ""
-Write-Host "  WSL Chrome Proxy  -  Installer" -ForegroundColor White
-Write-Host "  ================================" -ForegroundColor DarkGray
-Write-Host ""
-
-# ── 1. Check WSL + distro ─────────────────────────────────────────────────────
-Write-Step "Checking WSL..."
-try {
-    $wslOut = & wsl.exe --list --quiet 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "wsl.exe --list returned exit code $LASTEXITCODE" }
-    $found = ($wslOut | Where-Object { $_ -match [regex]::Escape($Distro) }).Count -gt 0
-    if (-not $found) {
-        Write-Host ""
-        Write-Fail ("WSL distro '$Distro' not found.`n" +
-                    "  Run the following once (requires admin), then run Install.cmd again:`n`n" +
-                    "    wsl.exe --install -d Ubuntu`n")
-    }
-    Write-OK "WSL distro '$Distro' is ready."
-} catch {
-    Write-Host ""
-    Write-Fail ("WSL is not available on this PC.`n" +
-                "  To enable WSL (requires admin, once):`n`n" +
-                "    wsl.exe --install -d Ubuntu`n`n" +
-                "  Reboot when prompted, then run Install.cmd again.`n")
-}
-
-# ── 2. Create install directories ─────────────────────────────────────────────
-Write-Step "Creating directories..."
+Write-Step "Creating install directories..."
 foreach ($d in @($installRoot, $wslDir, $extDir, $scriptsDir)) {
-    if (-not (Test-Path -LiteralPath $d)) {
-        New-Item -ItemType Directory -Path $d | Out-Null
-    }
+    if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
 }
 Write-OK $installRoot
 
-# ── 3. Copy files ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  3. Copy files
+# ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Copying files..."
 $copies = @(
-    @{ Src = "wsl\local-http-proxy.py";                     Dst = Join-Path $wslDir     "local-http-proxy.py" },
-    @{ Src = "wsl\start-proxy.sh";                          Dst = Join-Path $wslDir     "start-proxy.sh" },
-    @{ Src = "scripts\chrome-extension-update-server.ps1";  Dst = Join-Path $scriptsDir "chrome-extension-update-server.ps1" },
-    @{ Src = "chrome-extension.crx";                        Dst = Join-Path $extDir     "wsl-proxy-toggle.crx" }
+    @{ Src = "wsl\local-http-proxy.py";                    Dst = Join-Path $wslDir     "local-http-proxy.py" },
+    @{ Src = "wsl\start-proxy.sh";                         Dst = Join-Path $wslDir     "start-proxy.sh" },
+    @{ Src = "scripts\chrome-extension-update-server.ps1"; Dst = Join-Path $scriptsDir "chrome-extension-update-server.ps1" },
+    @{ Src = "chrome-extension.crx";                       Dst = Join-Path $extDir     "wsl-proxy-toggle.crx" }
 )
 foreach ($c in $copies) {
     $src = Join-Path $PSScriptRoot $c.Src
-    if (-not (Test-Path -LiteralPath $src)) {
-        Write-Fail "Missing source file: $src"
-    }
+    if (-not (Test-Path -LiteralPath $src)) { Write-Fail "Missing source file: $src" }
     Copy-Item -LiteralPath $src -Destination $c.Dst -Force
 }
-Write-OK "Files ready."
+Write-OK "Files copied."
 
-# ── 4. Generate update.xml ────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  4. update.xml for the local CRX server
+# ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Writing extension update manifest..."
 $crxUrl    = "http://127.0.0.1:$UpdateServerPort/wsl-proxy-toggle.crx"
 $updateUrl = "http://127.0.0.1:$UpdateServerPort/update.xml"
@@ -122,9 +259,11 @@ $updateXml = @"
 </gupdate>
 "@
 Set-Content -LiteralPath (Join-Path $extDir "update.xml") -Value $updateXml -Encoding ASCII
-Write-OK "update.xml written."
+Write-OK "update.xml ready."
 
-# ── 5. Start CRX update server ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  5. Start local CRX update server
+# ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Starting extension update server (port $UpdateServerPort)..."
 $serverRunning = $false
 if (Test-Path -LiteralPath $serverPidPath) {
@@ -147,8 +286,10 @@ if (-not $serverRunning) {
     Write-OK "Update server already running."
 }
 
-# ── 6. Chrome extension policy (HKCU — no admin) ─────────────────────────────
-Write-Step "Writing Chrome policy..."
+# ─────────────────────────────────────────────────────────────────────────────
+#  6. Chrome extension policy — HKCU, no admin
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Writing Chrome policy (HKCU — no admin needed)..."
 $policyRoot = "HKCU:\Software\Policies\Google\Chrome"
 $forceList  = "$policyRoot\ExtensionInstallForcelist"
 $allowList  = "$policyRoot\ExtensionInstallAllowlist"
@@ -163,54 +304,46 @@ Set-ItemProperty -Path $sourceList -Name "1" -Value "http://127.0.0.1/*"
 Set-ItemProperty -Path $sourceList -Name "2" -Value "http://127.0.0.1:$UpdateServerPort/*"
 
 $extSettings = @{
-    $extensionId = @{
-        installation_mode = "force_installed"
-        update_url        = $updateUrl
-    }
+    $extensionId = @{ installation_mode = "force_installed"; update_url = $updateUrl }
 } | ConvertTo-Json -Compress -Depth 5
 Set-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -Value $extSettings
 Write-OK "Chrome will install the extension automatically (no Developer mode needed)."
 
-# ── 7. Resolve WSL paths ──────────────────────────────────────────────────────
-Write-Step "Resolving WSL file paths..."
-function ConvertTo-WslPath {
-    param([string]$WinPath)
-    $esc    = "'" + ($WinPath -replace "'", "'\''") + "'"
-    $result = (& wsl.exe -d $Distro wslpath -a $esc 2>$null | Select-Object -First 1).Trim()
-    if (-not $result) { throw "Could not convert to WSL path: $WinPath" }
-    return $result
-}
+# ─────────────────────────────────────────────────────────────────────────────
+#  7. Resolve WSL paths
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Resolving WSL paths..."
 try {
     $wslShPath = ConvertTo-WslPath (Join-Path $wslDir "start-proxy.sh")
     $wslPyPath = ConvertTo-WslPath (Join-Path $wslDir "local-http-proxy.py")
 } catch {
     Write-Fail "WSL path conversion failed: $_"
 }
-Write-OK "WSL paths resolved."
+Write-OK "Paths resolved."
 
-# ── 8. Start WSL proxy ────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  8. Start WSL proxy
 #
-#  WSL2 localhost forwarding (on by default) makes any port bound to
-#  0.0.0.0 inside WSL accessible at 127.0.0.1:<port> on Windows.
-#  No netsh portproxy or admin rights needed.
-#
-Write-Step "Starting WSL proxy on Ubuntu port $ProxyPort..."
-$startCmd = "sh '$wslShPath' $ProxyPort '$wslPyPath'"
-& wsl.exe -d $Distro sh -lc $startCmd 2>$null | Out-Null
+#  WSL2 localhost-forwarding (on by default) makes 0.0.0.0:$ProxyPort inside
+#  WSL available at 127.0.0.1:$ProxyPort on Windows — no portproxy/admin needed.
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Starting WSL proxy (port $ProxyPort)..."
+& wsl.exe -d $Distro sh -lc "sh '$wslShPath' $ProxyPort '$wslPyPath'" 2>$null | Out-Null
 Start-Sleep -Milliseconds 500
 
 $portCheck = (& wsl.exe -d $Distro sh -lc "ss -ltn 2>/dev/null | grep -c ':$ProxyPort '" 2>$null |
               Select-Object -First 1).Trim()
 if ([int]$portCheck -gt 0) {
-    Write-OK "Proxy listening on Ubuntu:$ProxyPort -> Windows:127.0.0.1:$ProxyPort"
+    Write-OK "Proxy running: Ubuntu:$ProxyPort  ->  Windows 127.0.0.1:$ProxyPort"
 } else {
     Write-Warn "Port check inconclusive — proxy may take a moment to start."
 }
 
-# ── 9. Write startup script + HKCU\Run ───────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  9. Autostart via HKCU\Run
+# ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Registering autostart..."
 
-# We bake the resolved WSL paths in so the startup script needs no discovery.
 $startupContent = @"
 `$ErrorActionPreference = "SilentlyContinue"
 
@@ -250,20 +383,22 @@ $runValue = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidd
 Set-ItemProperty -Path $runKey -Name "WslChromeProxy" -Value $runValue
 Write-OK "Proxy will restart automatically after login."
 
-# ── done ──────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  Done
+# ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "  ================================" -ForegroundColor DarkGray
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Proxy running at  127.0.0.1:$ProxyPort" -ForegroundColor White
-Write-Host "  Autostart         enabled" -ForegroundColor White
+Write-Host "  Proxy:     127.0.0.1:$ProxyPort" -ForegroundColor White
+Write-Host "  Autostart: enabled" -ForegroundColor White
 Write-Host ""
 Write-Host "  --> Fully close and reopen Chrome." -ForegroundColor Yellow
 Write-Host "      The WSL Proxy Toggle extension will appear in your toolbar." -ForegroundColor White
 Write-Host ""
-Write-Host "  Day-to-day:" -ForegroundColor DarkGray
-Write-Host "    Proxy.cmd start    start or restart the proxy" -ForegroundColor DarkGray
-Write-Host "    Proxy.cmd stop     stop the proxy" -ForegroundColor DarkGray
+Write-Host "  Day-to-day control:" -ForegroundColor DarkGray
+Write-Host "    Proxy.cmd          start / restart" -ForegroundColor DarkGray
+Write-Host "    Proxy.cmd stop     stop everything" -ForegroundColor DarkGray
 Write-Host "    Proxy.cmd status   show current state" -ForegroundColor DarkGray
 Write-Host ""
 Read-Host "Press Enter to close"

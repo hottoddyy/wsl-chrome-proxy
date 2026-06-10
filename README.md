@@ -18,30 +18,33 @@ The Chrome extension is delivered via a local CRX update server and a Chrome reg
 
 | | |
 |---|---|
-| Windows 10 (21H2+) or Windows 11 | WSL 2 required |
-| WSL Ubuntu distro | Run `wsl --install -d Ubuntu` once if not set up |
-| Python 3 inside Ubuntu | Included with Ubuntu 20.04+ — nothing extra to install |
+| Windows 10 (21H2+) or Windows 11 | |
 | Google Chrome | Any recent version |
 
-> Setting up WSL for the first time needs admin (once). After that, everything runs as your normal user account.
+That's it. The installer handles everything else — WSL 2, Ubuntu, and Python 3 are all installed automatically if not already present.
+
+> If WSL needs to be enabled for the first time, Windows will ask for Administrator permission for that one step. Everything else runs without admin.
 
 ## Install
 
 1. Download the **[latest release ZIP](../../releases/latest)** and extract it anywhere.
 2. Double-click **`Install.cmd`**.
-3. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
+3. If WSL needs to be set up, Windows will show a UAC prompt — accept it. The installer handles the rest.
+4. If Windows needs to reboot to finish enabling WSL, it will say so. Reboot, then run `Install.cmd` again.
+5. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
 
 The proxy starts on login automatically from that point on.
 
 ## What the installer does
 
-- Copies files to `%LOCALAPPDATA%\WslChromeProxy\`
-- Starts a local CRX update server (port 18082) that Chrome uses to install the extension
-- Writes Chrome extension policy to `HKCU` — no admin needed
-- Starts the Python proxy inside WSL Ubuntu on port 18080
-- Adds an autostart entry to `HKCU\Run` so the proxy comes back after reboot
-
-No portproxy rules. No firewall changes. No admin.
+| Step | Needs admin? | What happens |
+|---|---|---|
+| WSL + Ubuntu | Once only, if not installed | Installs WSL 2 and Ubuntu via `wsl --install` |
+| Python 3 | No | Verified inside Ubuntu; installed via `apt` if missing |
+| Proxy files | No | Copied to `%LOCALAPPDATA%\WslChromeProxy\` |
+| Chrome extension | No | Local CRX server + `HKCU` policy — no Developer mode needed |
+| WSL proxy | No | Python process started inside Ubuntu on port 18080 |
+| Autostart | No | `HKCU\Run` entry restarts proxy after login |
 
 ## Day-to-day control
 
