@@ -78,6 +78,25 @@ Write-Host "  Removed Chrome extension policy." -ForegroundColor DarkGray
 Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "  Removed $installRoot" -ForegroundColor DarkGray
 
+# Remove Proxy.cmd shim from %USERPROFILE%\bin
+$binDir   = Join-Path $env:USERPROFILE "bin"
+$proxyCmd = Join-Path $binDir "Proxy.cmd"
+Remove-Item -LiteralPath $proxyCmd -Force -ErrorAction SilentlyContinue
+Write-Host "  Removed Proxy.cmd shim." -ForegroundColor DarkGray
+
+# Legacy cleanup: old WSL.cmd shim and doskey AutoRun alias (pre-v1 installer)
+$oldWslCmd = Join-Path $binDir "WSL.cmd"
+if (Test-Path $oldWslCmd) {
+    Remove-Item -LiteralPath $oldWslCmd -Force -ErrorAction SilentlyContinue
+    Write-Host "  Removed legacy WSL.cmd shim." -ForegroundColor DarkGray
+}
+$autoRunPath  = "HKCU:\Software\Microsoft\Command Processor"
+$autoRunValue = (Get-ItemProperty -Path $autoRunPath -Name AutoRun -ErrorAction SilentlyContinue).AutoRun
+if ($autoRunValue -and $autoRunValue -match 'WSL') {
+    Remove-ItemProperty -Path $autoRunPath -Name AutoRun -Force -ErrorAction SilentlyContinue
+    Write-Host "  Removed legacy doskey WSL alias from AutoRun." -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "  Done. Restart Chrome to remove the extension." -ForegroundColor Green
 Write-Host ""
