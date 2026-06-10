@@ -125,6 +125,28 @@ Write-Host "  ================================" -ForegroundColor DarkGray
 Write-Host ""
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  0. Stop any existing instance (makes re-running / updating safe)
+# ─────────────────────────────────────────────────────────────────────────────
+$installRoot   = Join-Path $env:LOCALAPPDATA "WslChromeProxy"
+$extDir        = Join-Path $installRoot "ChromeExtension"
+$serverPidPath = Join-Path $extDir "update-server.pid"
+$scriptsDir    = Join-Path $installRoot "scripts"
+$startupScript = Join-Path $installRoot "Start-WslChromeProxy.ps1"
+
+Write-Step "Stopping any existing instance..."
+# Stop update server
+if (Test-Path -LiteralPath $serverPidPath) {
+    $savedPid = (Get-Content -LiteralPath $serverPidPath -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($savedPid) {
+        Stop-Process -Id ([int]$savedPid) -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $serverPidPath -Force -ErrorAction SilentlyContinue
+}
+# Stop WSL proxy (kill by script name to catch any port)
+& wsl.exe -d $Distro sh -lc "pkill -f 'local-http-proxy.py' 2>/dev/null; rm -f /tmp/wsl-chrome-proxy/proxy.pid" 2>$null | Out-Null
+Write-OK "Clean slate."
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  1. WSL + Ubuntu  (elevates only if needed)
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Checking WSL + Ubuntu..."
@@ -211,12 +233,7 @@ Write-OK $pyCheck
 # ─────────────────────────────────────────────────────────────────────────────
 #  2. Install directories
 # ─────────────────────────────────────────────────────────────────────────────
-$installRoot   = Join-Path $env:LOCALAPPDATA "WslChromeProxy"
-$wslDir        = Join-Path $installRoot "wsl"
-$extDir        = Join-Path $installRoot "ChromeExtension"
-$scriptsDir    = Join-Path $installRoot "scripts"
-$serverPidPath = Join-Path $extDir "update-server.pid"
-$startupScript = Join-Path $installRoot "Start-WslChromeProxy.ps1"
+$wslDir = Join-Path $installRoot "wsl"
 
 $extensionId      = "apchgcioodnlnhbgdokfccpojkcanjnk"
 $extensionVersion = "1.0.0"
