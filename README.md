@@ -48,15 +48,24 @@ The proxy starts on login automatically from that point on.
 
 ## Day-to-day control
 
-From the folder where you extracted the files (or from any CMD window if you add it to PATH):
+After install, `Proxy` is available from **any CMD window**:
 
 ```cmd
-Proxy.cmd           start (or restart) the proxy
-Proxy.cmd stop      stop everything
-Proxy.cmd status    show current state
+Proxy           start (or restart) the proxy
+Proxy stop      stop everything
+Proxy status    show current state and installed version
+Proxy update    download and install the latest release from GitHub
 ```
 
-The Chrome extension popup also lets you toggle the proxy on/off without starting/stopping the backend.
+The Chrome extension popup also lets you toggle the proxy on/off without touching the backend.
+
+## Updating
+
+```cmd
+Proxy update
+```
+
+That's it. The command fetches the latest release ZIP from GitHub, extracts it, and re-runs the installer in-place. No duplicate installs — everything always lives in `%LOCALAPPDATA%\WslChromeProxy\`.
 
 ## Uninstall
 

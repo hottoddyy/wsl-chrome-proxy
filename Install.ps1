@@ -252,7 +252,8 @@ $copies = @(
     @{ Src = "wsl\local-http-proxy.py";                    Dst = Join-Path $wslDir     "local-http-proxy.py" },
     @{ Src = "wsl\start-proxy.sh";                         Dst = Join-Path $wslDir     "start-proxy.sh" },
     @{ Src = "scripts\chrome-extension-update-server.ps1"; Dst = Join-Path $scriptsDir "chrome-extension-update-server.ps1" },
-    @{ Src = "chrome-extension.crx";                       Dst = Join-Path $extDir     "wsl-proxy-toggle.crx" }
+    @{ Src = "chrome-extension.crx";                       Dst = Join-Path $extDir     "wsl-proxy-toggle.crx" },
+    @{ Src = "scripts\proxy-control.ps1";                  Dst = Join-Path $scriptsDir "proxy-control.ps1" }
 )
 foreach ($c in $copies) {
     $src = Join-Path $PSScriptRoot $c.Src
@@ -401,6 +402,47 @@ Set-ItemProperty -Path $runKey -Name "WslChromeProxy" -Value $runValue
 Write-OK "Proxy will restart automatically after login."
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  10. Permanent Proxy.cmd shim in %USERPROFILE%\bin  (on PATH)
+#      This means 'Proxy start/stop/status/update' works from any CMD window
+#      regardless of where the repo was cloned or whether it still exists.
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Installing Proxy command..."
+$binDir      = Join-Path $env:USERPROFILE "bin"
+$proxyCmdDst = Join-Path $binDir "Proxy.cmd"
+$proxyCtrl   = Join-Path $scriptsDir "proxy-control.ps1"
+
+if (-not (Test-Path -LiteralPath $binDir)) {
+    New-Item -ItemType Directory -Path $binDir | Out-Null
+}
+
+# Write a shim that always points at the installed proxy-control.ps1
+$shimContent = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$proxyCtrl`" %*`r`n"
+Set-Content -LiteralPath $proxyCmdDst -Value $shimContent -Encoding ASCII
+
+# Add %USERPROFILE%\bin to PATH if not already there
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$parts    = $userPath -split ";" | Where-Object { $_ }
+if ($parts -notcontains $binDir) {
+    [Environment]::SetEnvironmentVariable("Path", ($parts + $binDir -join ";"), "User")
+    Write-OK "Added $binDir to your PATH (open a new CMD window to use it)."
+} else {
+    Write-OK "Proxy command installed at $proxyCmdDst"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  11. Write version.txt so 'Proxy update' knows what is installed
+# ─────────────────────────────────────────────────────────────────────────────
+# Try to read the version from a VERSION file next to Install.ps1 (written by
+# make-release.ps1), or fall back to the extension version string.
+$versionFile  = Join-Path $PSScriptRoot "VERSION"
+$installedVer = if (Test-Path $versionFile) {
+    (Get-Content $versionFile -Raw).Trim()
+} else {
+    "v$extensionVersion"
+}
+Set-Content -LiteralPath (Join-Path $installRoot "version.txt") -Value $installedVer -Encoding ASCII
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Done
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
@@ -413,9 +455,10 @@ Write-Host ""
 Write-Host "  --> Fully close and reopen Chrome." -ForegroundColor Yellow
 Write-Host "      The WSL Proxy Toggle extension will appear in your toolbar." -ForegroundColor White
 Write-Host ""
-Write-Host "  Day-to-day control:" -ForegroundColor DarkGray
-Write-Host "    Proxy.cmd          start / restart" -ForegroundColor DarkGray
-Write-Host "    Proxy.cmd stop     stop everything" -ForegroundColor DarkGray
-Write-Host "    Proxy.cmd status   show current state" -ForegroundColor DarkGray
+Write-Host "  Day-to-day (from any CMD window):" -ForegroundColor DarkGray
+Write-Host "    Proxy          start / restart" -ForegroundColor DarkGray
+Write-Host "    Proxy stop     stop everything" -ForegroundColor DarkGray
+Write-Host "    Proxy status   show current state" -ForegroundColor DarkGray
+Write-Host "    Proxy update   download and install latest from GitHub" -ForegroundColor DarkGray
 Write-Host ""
 Read-Host "Press Enter to close"
