@@ -62,6 +62,8 @@ Proxy update    download and install the latest release from GitHub
 
 The Chrome extension popup also lets you toggle the proxy on/off without touching the backend.
 
+> The proxy runs **permanently**: it starts automatically every time you log in to Windows, so you never need to run anything by hand. `Proxy stop` only stops it until your next login — to switch it off for a single site or session, use the extension's toggle instead.
+
 ## Updating
 
 ```cmd
