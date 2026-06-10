@@ -108,6 +108,19 @@ function ConvertTo-WslPath {
     return $result
 }
 
+function Copy-IntoWsl {
+    # Pushes a Windows text file into WSL's own filesystem at
+    # $HOME/.wsl-chrome-proxy/<DestName>, stripping CR and any BOM. Uses base64
+    # over stdin so it never touches the /mnt/c drvfs mount - which can hide
+    # newly-created folders and mangle line endings.
+    param([string]$WinPath, [string]$DestName, [string]$DistroName)
+    $text  = [System.IO.File]::ReadAllText($WinPath) -replace "`r", ""
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    $b64   = [Convert]::ToBase64String($bytes)
+    $cmd   = "mkdir -p `$HOME/.wsl-chrome-proxy && printf '%s' '$b64' | base64 -d > `$HOME/.wsl-chrome-proxy/$DestName"
+    & wsl.exe -d $DistroName sh -c $cmd
+}
+
 function Test-PendingReboot {
     $paths = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
@@ -388,16 +401,20 @@ exit 0
 Write-OK "Chrome will install the extension automatically (no Developer mode needed)."
 
 # ?????????????????????????????????????????????????????????????????????????????
-#  7. Resolve WSL paths
+#  7. Push proxy files into WSL's own filesystem
+#
+#  Running scripts straight off /mnt/c is fragile: drvfs can hide freshly
+#  created folders from WSL and rewrites line endings. Copying into the WSL
+#  home dir sidesteps all of that and is faster too.
 # ?????????????????????????????????????????????????????????????????????????????
-Write-Step "Resolving WSL paths..."
+Write-Step "Installing proxy into WSL..."
 try {
-    $wslShPath = ConvertTo-WslPath (Join-Path $wslDir "start-proxy.sh")
-    $wslPyPath = ConvertTo-WslPath (Join-Path $wslDir "local-http-proxy.py")
+    Copy-IntoWsl -WinPath (Join-Path $wslDir "start-proxy.sh")       -DestName "start-proxy.sh"       -DistroName $Distro
+    Copy-IntoWsl -WinPath (Join-Path $wslDir "local-http-proxy.py")  -DestName "local-http-proxy.py"  -DistroName $Distro
 } catch {
-    Write-Fail "WSL path conversion failed: $_"
+    Write-Fail "Could not copy proxy files into WSL: $_"
 }
-Write-OK "Paths resolved."
+Write-OK "Proxy files installed in WSL."
 
 # ?????????????????????????????????????????????????????????????????????????????
 #  8. Start WSL proxy
@@ -406,7 +423,7 @@ Write-OK "Paths resolved."
 #  WSL available at 127.0.0.1:$ProxyPort on Windows - no portproxy/admin needed.
 # ?????????????????????????????????????????????????????????????????????????????
 Write-Step "Starting WSL proxy (port $ProxyPort)..."
-& wsl.exe -d $Distro sh -lc "sh '$wslShPath' $ProxyPort '$wslPyPath'" 2>$null | Out-Null
+& wsl.exe -d $Distro sh -lc "sh `$HOME/.wsl-chrome-proxy/start-proxy.sh $ProxyPort `$HOME/.wsl-chrome-proxy/local-http-proxy.py" 2>$null | Out-Null
 Start-Sleep -Milliseconds 500
 
 $portCheck = (& wsl.exe -d $Distro sh -lc "ss -ltn 2>/dev/null | grep -c ':$ProxyPort '" 2>$null |
@@ -419,45 +436,22 @@ if ([int]$portCheck -gt 0) {
 
 # ?????????????????????????????????????????????????????????????????????????????
 #  9. Autostart via HKCU\Run
+#
+#  All the start logic lives in proxy-control.ps1 (a committed file - no fragile
+#  here-string escaping). We just record the config and point Run at it.
 # ?????????????????????????????????????????????????????????????????????????????
 Write-Step "Registering autostart..."
 
-$startupContent = @"
-`$ErrorActionPreference = "SilentlyContinue"
+$configContent = @(
+    "ProxyPort=$ProxyPort",
+    "Distro=$Distro",
+    "UpdateServerPort=$UpdateServerPort"
+) -join "`r`n"
+Set-Content -LiteralPath (Join-Path $installRoot "config.txt") -Value $configContent -Encoding ASCII
 
-# Extension update server
-`$extDir          = "$extDir"
-`$serverPidPath   = Join-Path `$extDir "update-server.pid"
-`$serverPs        = "$scriptsDir\chrome-extension-update-server.ps1"
-`$UpdateServerPort = $UpdateServerPort
-
-`$running = `$false
-if (Test-Path `$serverPidPath) {
-    `$p = (Get-Content `$serverPidPath -Raw).Trim()
-    if (`$p) { `$running = [bool](Get-Process -Id ([int]`$p) -ErrorAction SilentlyContinue) }
-}
-if (-not `$running) {
-    `$proc = Start-Process powershell.exe -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", ('"' + `$serverPs + '"'),
-        "-Port", `$UpdateServerPort,
-        "-Root", ('"' + `$extDir + '"')
-    ) -WindowStyle Hidden -PassThru
-    Set-Content `$serverPidPath -Value `$proc.Id -Encoding ASCII
-}
-
-# WSL proxy
-`$wslShPath = "$wslShPath"
-`$wslPyPath = "$wslPyPath"
-`$ProxyPort = $ProxyPort
-`$Distro    = "$Distro"
-& wsl.exe -d `$Distro sh -lc "sh '`$wslShPath' `$ProxyPort '`$wslPyPath'" 2>`$null | Out-Null
-"@
-
-Set-Content -LiteralPath $startupScript -Value $startupContent -Encoding UTF8
-
-$runKey   = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-$runValue = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$startupScript`""
+$proxyCtrl = Join-Path $scriptsDir "proxy-control.ps1"
+$runKey    = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+$runValue  = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$proxyCtrl`" start"
 Set-ItemProperty -Path $runKey -Name "WslChromeProxy" -Value $runValue
 Write-OK "Proxy will restart automatically after login."
 

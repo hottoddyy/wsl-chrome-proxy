@@ -22,10 +22,12 @@ $repoOwner   = "hottoddyy"
 $repoName    = "wsl-chrome-proxy"
 $installRoot = Join-Path $env:LOCALAPPDATA "WslChromeProxy"
 
-$startupScript = Join-Path $installRoot "Start-WslChromeProxy.ps1"
 $extDir        = Join-Path $installRoot "ChromeExtension"
 $serverPidPath = Join-Path $extDir "update-server.pid"
 $scriptsDir    = Join-Path $installRoot "scripts"
+$wslDir        = Join-Path $installRoot "wsl"
+$serverPs      = Join-Path $scriptsDir "chrome-extension-update-server.ps1"
+$configFile    = Join-Path $installRoot "config.txt"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 function Get-ServerPid {
@@ -36,14 +38,45 @@ function Get-ServerPid {
 }
 
 function Get-ProxyConfig {
-    $port   = 18080
-    $distro = "Ubuntu"
-    if (Test-Path $startupScript) {
-        $c = Get-Content $startupScript -Raw
-        if ($c -match '\$ProxyPort\s*=\s*(\d+)')    { $port   = [int]$Matches[1] }
-        if ($c -match '\$Distro\s*=\s*"([^"]+)"')   { $distro = $Matches[1] }
+    # config.txt holds simple KEY=VALUE lines written by the installer.
+    $port       = 18080
+    $distro     = "Ubuntu"
+    $serverPort = 18082
+    if (Test-Path $configFile) {
+        foreach ($line in Get-Content $configFile) {
+            if ($line -match '^\s*ProxyPort\s*=\s*(\d+)')        { $port       = [int]$Matches[1] }
+            elseif ($line -match '^\s*Distro\s*=\s*(.+?)\s*$')   { $distro     = $Matches[1] }
+            elseif ($line -match '^\s*UpdateServerPort\s*=\s*(\d+)') { $serverPort = [int]$Matches[1] }
+        }
     }
-    return @{ Port = $port; Distro = $distro }
+    return @{ Port = $port; Distro = $distro; ServerPort = $serverPort }
+}
+
+function Copy-IntoWsl {
+    # Push a Windows text file into WSL's own filesystem at
+    # $HOME/.wsl-chrome-proxy/<DestName>, stripping CR and any BOM. base64 over
+    # stdin avoids the /mnt/c drvfs mount, which can hide freshly created
+    # folders from WSL and rewrite line endings.
+    param([string]$WinPath, [string]$DestName, [string]$DistroName)
+    $text  = [System.IO.File]::ReadAllText($WinPath) -replace "`r", ""
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    $b64   = [Convert]::ToBase64String($bytes)
+    $cmd   = 'mkdir -p $HOME/.wsl-chrome-proxy && printf %s ' + "'$b64'" + ' | base64 -d > $HOME/.wsl-chrome-proxy/' + $DestName
+    & wsl.exe -d $DistroName sh -c $cmd
+}
+
+function Start-UpdateServer {
+    param([int]$ServerPort)
+    $proc = Get-ServerPid
+    if ($proc) { return }
+    if (-not (Test-Path $serverPs)) { return }
+    $p = Start-Process powershell.exe -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", ('"' + $serverPs + '"'),
+        "-Port", $ServerPort,
+        "-Root", ('"' + $extDir + '"')
+    ) -WindowStyle Hidden -PassThru
+    Set-Content $serverPidPath -Value $p.Id -Encoding ASCII
 }
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -61,11 +94,20 @@ function Stop-Proxy {
 }
 
 function Start-Proxy {
-    if (-not (Test-Path $startupScript)) {
-        Write-Host "Not installed. Run Install.cmd first." -ForegroundColor Red
+    if (-not (Test-Path $wslDir)) {
+        Write-Host "Not installed. Run the installer first." -ForegroundColor Red
         exit 1
     }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startupScript
+    $cfg = Get-ProxyConfig
+
+    # 1. Extension update server (Windows side)
+    Start-UpdateServer -ServerPort $cfg.ServerPort
+
+    # 2. Push proxy scripts into WSL and start them there
+    Copy-IntoWsl -WinPath (Join-Path $wslDir "start-proxy.sh")      -DestName "start-proxy.sh"      -DistroName $cfg.Distro
+    Copy-IntoWsl -WinPath (Join-Path $wslDir "local-http-proxy.py") -DestName "local-http-proxy.py" -DistroName $cfg.Distro
+    & wsl.exe -d $cfg.Distro sh -lc "sh `$HOME/.wsl-chrome-proxy/start-proxy.sh $($cfg.Port) `$HOME/.wsl-chrome-proxy/local-http-proxy.py" 2>$null | Out-Null
+
     Write-Host "Proxy started." -ForegroundColor Green
 }
 

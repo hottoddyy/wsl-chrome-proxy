@@ -23,7 +23,7 @@ $installRoot   = Join-Path $env:LOCALAPPDATA "WslChromeProxy"
 $extDir        = Join-Path $installRoot "ChromeExtension"
 $serverPidPath = Join-Path $extDir "update-server.pid"
 $scriptsDir    = Join-Path $installRoot "scripts"
-$startupScript = Join-Path $installRoot "Start-WslChromeProxy.ps1"
+$configFile    = Join-Path $installRoot "config.txt"
 
 Write-Host ""
 Write-Host "  Uninstalling WSL Chrome Proxy..." -ForegroundColor White
@@ -40,12 +40,13 @@ Write-Host "  Stopped extension update server." -ForegroundColor DarkGray
 # Stop WSL proxy
 $proxyPort = 18080
 $distro    = "Ubuntu"
-if (Test-Path $startupScript) {
-    $content = Get-Content $startupScript -Raw
-    if ($content -match '`\$ProxyPort\s*=\s*(\d+)') { $proxyPort = [int]$Matches[1] }
-    if ($content -match '`\$Distro\s*=\s*"([^"]+)"') { $distro = $Matches[1] }
+if (Test-Path $configFile) {
+    foreach ($line in Get-Content $configFile) {
+        if ($line -match '^\s*ProxyPort\s*=\s*(\d+)')      { $proxyPort = [int]$Matches[1] }
+        elseif ($line -match '^\s*Distro\s*=\s*(.+?)\s*$') { $distro    = $Matches[1] }
+    }
 }
-& wsl.exe -d $distro sh -lc "pkill -f 'local-http-proxy.py.*--port $proxyPort' 2>/dev/null; rm -rf /tmp/wsl-chrome-proxy" 2>$null | Out-Null
+& wsl.exe -d $distro sh -lc "pkill -f 'local-http-proxy.py' 2>/dev/null; rm -rf /tmp/wsl-chrome-proxy `$HOME/.wsl-chrome-proxy" 2>$null | Out-Null
 Write-Host "  Stopped WSL proxy." -ForegroundColor DarkGray
 
 # Remove HKCU\Run autostart
