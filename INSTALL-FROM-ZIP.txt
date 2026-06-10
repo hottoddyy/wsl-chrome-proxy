@@ -1,0 +1,17 @@
+WSL Chrome Proxy ZIP Installer
+
+1. Extract the zip file.
+2. Right-click PowerShell and run as Administrator.
+3. Run:
+
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-all.ps1
+
+4. If WSL is installed for the first time and Windows asks for a reboot, reboot and run the same command again.
+5. Restart Chrome.
+6. Enable WSL Proxy Toggle in Chrome.
+
+Daily use from a new CMD window:
+
+   WSL
+   WSL status
+   WSL stop

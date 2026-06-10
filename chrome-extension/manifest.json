@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "WSL Proxy Toggle",
+  "description": "Toggle Chrome proxy settings for a local Windows-to-WSL proxy connector.",
+  "version": "1.0.0",
+  "permissions": [
+    "proxy",
+    "storage"
+  ],
+  "action": {
+    "default_title": "WSL Proxy",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

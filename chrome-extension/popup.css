@@ -1,0 +1,96 @@
+:root {
+  color-scheme: light dark;
+  font-family: Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  width: 280px;
+  background: #f8fafc;
+  color: #111827;
+}
+
+main {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+h1 {
+  font-size: 16px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+#status {
+  font-size: 12px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.target {
+  background: #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  margin: 0;
+  padding: 8px 9px;
+}
+
+.switch {
+  display: inline-block;
+  height: 24px;
+  position: relative;
+  width: 44px;
+}
+
+.switch input {
+  opacity: 0;
+  position: absolute;
+}
+
+.switch span {
+  background: #94a3b8;
+  border-radius: 999px;
+  cursor: pointer;
+  inset: 0;
+  position: absolute;
+  transition: background 0.15s ease;
+}
+
+.switch span::before {
+  background: white;
+  border-radius: 50%;
+  content: "";
+  height: 18px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform 0.15s ease;
+  width: 18px;
+}
+
+.switch input:checked + span {
+  background: #15803d;
+}
+
+.switch input:checked + span::before {
+  transform: translateX(20px);
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #111827;
+    color: #f9fafb;
+  }
+
+  .target {
+    background: #1f2937;
+    color: #f9fafb;
+  }
+}
