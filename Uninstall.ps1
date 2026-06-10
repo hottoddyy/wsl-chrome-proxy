@@ -98,6 +98,19 @@ if ($autoRunValue -and $autoRunValue -match 'WSL') {
     Write-Host "  Removed legacy doskey WSL alias from AutoRun." -ForegroundColor DarkGray
 }
 
+# Legacy cleanup: netsh portproxy rule on the proxy port (pre-v1 installer).
+# A stale rule hijacks 127.0.0.1:<port> ahead of WSL2 localhost forwarding and
+# resets every connection. Deleting it needs admin, so only elevate when found.
+$portproxyOut = (netsh interface portproxy show v4tov4) -join "`n"
+if ($portproxyOut -match "127\.0\.0\.1\s+$proxyPort\s") {
+    Write-Host "  Found legacy portproxy rule on port $proxyPort - removing (needs admin)..." -ForegroundColor Yellow
+    Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
+        "-NoProfile", "-Command",
+        "netsh interface portproxy delete v4tov4 listenport=$proxyPort listenaddress=127.0.0.1"
+    )
+    Write-Host "  Removed legacy portproxy rule." -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "  Done. Restart Chrome to remove the extension." -ForegroundColor Green
 Write-Host ""

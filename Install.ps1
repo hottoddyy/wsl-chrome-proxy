@@ -147,6 +147,18 @@ if (Test-Path -LiteralPath $serverPidPath) {
 }
 # Stop WSL proxy (kill by script name to catch any port)
 & wsl.exe -d $Distro sh -lc "pkill -f 'local-http-proxy.py' 2>/dev/null; rm -f /tmp/wsl-chrome-proxy/proxy.pid" 2>$null | Out-Null
+
+# A stale netsh portproxy rule (from older versions of this tool) hijacks
+# 127.0.0.1:$ProxyPort ahead of WSL2 localhost forwarding and resets every
+# connection. Deleting it needs admin, so only elevate when one is found.
+$portproxyOut = (netsh interface portproxy show v4tov4 2>$null) -join "`n"
+if ($portproxyOut -match "127\.0\.0\.1\s+$ProxyPort\s") {
+    Write-Warn "Found a stale portproxy rule on port $ProxyPort - removing it (Windows will ask for admin)..."
+    Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
+        "-NoProfile", "-Command",
+        "netsh interface portproxy delete v4tov4 listenport=$ProxyPort listenaddress=127.0.0.1"
+    )
+}
 Write-OK "Clean slate."
 
 # ?????????????????????????????????????????????????????????????????????????????
