@@ -4,7 +4,13 @@
   Removes WSL Chrome Proxy completely.
 #>
 [CmdletBinding()]
-param([switch]$Confirm)
+param(
+    [switch]$Confirm,
+    # Set when invoked by the Inno Setup uninstaller. Leaves Inno's own
+    # unins000.* files (and the directory) in place so Inno can finish and
+    # deregister the Apps & Features entry. A standalone run wipes everything.
+    [switch]$KeepInstallDir
+)
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -76,8 +82,17 @@ if ($needElevate) {
 Write-Host "  Removed Chrome extension policy." -ForegroundColor DarkGray
 
 # Remove install directory
-Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "  Removed $installRoot" -ForegroundColor DarkGray
+if ($KeepInstallDir) {
+    # Inno is mid-uninstall and running unins000.exe from this folder. Delete
+    # everything except its uninstaller files so it can finish and deregister.
+    Get-ChildItem -LiteralPath $installRoot -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike "unins000.*" } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  Cleaned $installRoot (Inno will remove the rest)." -ForegroundColor DarkGray
+} else {
+    Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  Removed $installRoot" -ForegroundColor DarkGray
+}
 
 # Remove Proxy.cmd shim from %USERPROFILE%\bin
 $binDir   = Join-Path $env:USERPROFILE "bin"

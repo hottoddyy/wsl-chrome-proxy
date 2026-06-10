@@ -1,5 +1,5 @@
 #define AppName      "WSL Chrome Proxy"
-#define AppVersion   "1.3.3"
+#define AppVersion   "1.3.7"
 #define AppPublisher "hottoddyy"
 
 [Setup]
@@ -51,7 +51,7 @@ begin
   if CurUninstallStep = usUninstall then begin
     Script := ExpandConstant('{app}\Uninstall.ps1');
     if FileExists(Script) then begin
-      Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Confirm';
+      Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Confirm -KeepInstallDir';
       Exec('powershell.exe', Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
     end;
   end;

@@ -57,6 +57,13 @@ Write-Host "Built: $zipPath  ($([int]((Get-Item $zipPath).Length/1kb)) KB)"
 $iscc    = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 $exePath = Join-Path $root "WSLChromeProxy-Setup.exe"
 if (Test-Path $iscc) {
+    # Keep setup.iss AppVersion in sync with the release tag (strip leading 'v')
+    $issPath  = Join-Path $root "setup.iss"
+    $issText  = Get-Content $issPath -Raw
+    $verNoV   = $Tag -replace '^v', ''
+    $issText  = $issText -replace '(#define\s+AppVersion\s+)"[^"]*"', "`${1}`"$verNoV`""
+    Set-Content -LiteralPath $issPath -Value $issText -Encoding ASCII
+
     Write-Host "Building installer EXE..."
     & $iscc (Join-Path $root "setup.iss") | Out-Null
     Write-Host "Built: $exePath  ($([int]((Get-Item $exePath).Length/1kb)) KB)"
