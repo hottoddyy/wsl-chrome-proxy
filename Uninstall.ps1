@@ -47,6 +47,9 @@ Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" 
 Write-Host "  Removed autostart." -ForegroundColor DarkGray
 
 # Remove Chrome policy
+# Note: HKCU\Software\Policies\Google\Chrome may have a restricted ACL if IT
+# Group Policy manages it. We attempt a normal remove first; if that fails we
+# elevate just for the registry cleanup step.
 $policyRoot = "HKCU:\Software\Policies\Google\Chrome"
 foreach ($key in @(
     "$policyRoot\ExtensionInstallForcelist",
@@ -55,7 +58,20 @@ foreach ($key in @(
 )) {
     Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
 }
-Remove-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -ErrorAction SilentlyContinue
+
+# Try removing ExtensionSettings normally; elevate if access denied
+$removed = $false
+try {
+    Remove-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -ErrorAction Stop
+    $removed = $true
+} catch {}
+
+if (-not $removed) {
+    Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        "reg delete 'HKCU\Software\Policies\Google\Chrome' /v 'ExtensionSettings' /f 2>`$null"
+    )
+}
 Write-Host "  Removed Chrome extension policy." -ForegroundColor DarkGray
 
 # Remove install directory
