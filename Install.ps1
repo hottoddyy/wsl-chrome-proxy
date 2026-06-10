@@ -427,9 +427,9 @@ if (Test-Path `$serverPidPath) {
 if (-not `$running) {
     `$proc = Start-Process powershell.exe -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", "`"`$serverPs`"",
+        "-File", ('"' + `$serverPs + '"'),
         "-Port", `$UpdateServerPort,
-        "-Root", "`"`$extDir`""
+        "-Root", ('"' + `$extDir + '"')
     ) -WindowStyle Hidden -PassThru
     Set-Content `$serverPidPath -Value `$proc.Id -Encoding ASCII
 }
