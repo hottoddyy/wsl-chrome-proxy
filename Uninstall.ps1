@@ -47,29 +47,30 @@ Remove-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" 
 Write-Host "  Removed autostart." -ForegroundColor DarkGray
 
 # Remove Chrome policy
-# Note: HKCU\Software\Policies\Google\Chrome may have a restricted ACL if IT
-# Group Policy manages it. We attempt a normal remove first; if that fails we
-# elevate just for the registry cleanup step.
-$policyRoot = "HKCU:\Software\Policies\Google\Chrome"
-foreach ($key in @(
-    "$policyRoot\ExtensionInstallForcelist",
-    "$policyRoot\ExtensionInstallAllowlist",
-    "$policyRoot\ExtensionInstallSources"
-)) {
-    Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
+# Note: HKCU\Software\Policies\Google\Chrome has a restricted ACL when IT Group
+# Policy manages it. Try normally first; if any fail, do one elevated pass for all.
+$policyRoot  = "HKCU:\Software\Policies\Google\Chrome"
+$subKeys     = @("ExtensionInstallForcelist","ExtensionInstallAllowlist","ExtensionInstallSources")
+$needElevate = $false
+
+foreach ($sub in $subKeys) {
+    try {
+        Remove-Item -Path "$policyRoot\$sub" -Recurse -Force -ErrorAction Stop
+    } catch { $needElevate = $true }
 }
 
-# Try removing ExtensionSettings normally; elevate if access denied
-$removed = $false
+# Try removing ExtensionSettings value normally
 try {
     Remove-ItemProperty -Path $policyRoot -Name "ExtensionSettings" -ErrorAction Stop
-    $removed = $true
-} catch {}
+} catch { $needElevate = $true }
 
-if (-not $removed) {
+if ($needElevate) {
+    $cmds = ($subKeys | ForEach-Object {
+        "reg delete `"HKCU\Software\Policies\Google\Chrome\$_`" /f 2>`$null"
+    }) -join "; "
+    $cmds += "; reg delete `"HKCU\Software\Policies\Google\Chrome`" /v `"ExtensionSettings`" /f 2>`$null"
     Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-        "reg delete 'HKCU\Software\Policies\Google\Chrome' /v 'ExtensionSettings' /f 2>`$null"
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cmds
     )
 }
 Write-Host "  Removed Chrome extension policy." -ForegroundColor DarkGray
