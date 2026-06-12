@@ -1,6 +1,6 @@
 # WSL Chrome Proxy
 
-Routes Chrome traffic through a lightweight HTTP/HTTPS proxy running inside WSL Ubuntu. A Chrome extension toggles the proxy on/off — **installs automatically, no Developer mode or admin rights required**.
+Routes Chrome traffic through a lightweight HTTP/HTTPS proxy running inside WSL Ubuntu. A Chrome extension toggles the proxy on/off — **installs automatically, no Developer mode required, admin rights are unfortunately**.
 
 ## How it works
 
@@ -21,22 +21,21 @@ The Chrome extension is delivered via a local CRX update server and a Chrome reg
 | Windows 10 (21H2+) or Windows 11 | |
 | Google Chrome | Any recent version |
 
-That's it. The installer handles everything else — WSL 2, Ubuntu, and Python 3 are all installed automatically if not already present.
+Installer handles everything else — WSL 2, Ubuntu, and Python 3 are all installed automatically if not already present.
 
 > If WSL needs to be enabled for the first time, Windows will ask for Administrator permission for that one step. Everything else runs without admin.
 
 ## Install
 
 1. Download **`WSLChromeProxy-Setup.exe`** from the **[latest release](../../releases/latest)**.
-2. Run it. The setup wizard installs everything per-user — no admin needed for the installer itself.
+2. Run it. The setup wizard installs per-user with no UAC reqs.
 3. If WSL needs to be set up, Windows will show a UAC prompt — accept it. The installer handles the rest.
 4. **First-time WSL install only:** after Ubuntu downloads, a blue Ubuntu window opens and asks you to create a Unix username and password (pick anything — it's only used inside Ubuntu). Once you see the green `$` prompt, **type `exit` and press Enter** to close it. The installer then carries on automatically.
-5. If Windows needs to reboot to finish enabling WSL, it will say so. Reboot, then run the setup again.
-6. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
+5. When complete, **restart Chrome** — the *WSL Proxy Toggle* extension appears in your toolbar automatically.
 
-> Prefer scripts? The release also includes a ZIP — extract it and double-click `Install.cmd` instead.
+Release also include a script install if preferred.
 
-The proxy starts on login automatically from that point on.
+The proxy starts on login automatically from that point on. If it fails to start/internet is not working, open CMD and type **proxy**. To turn off the proxy, type  **stop proxy**.
 
 ## What the installer does
 
@@ -69,8 +68,6 @@ The Chrome extension popup also lets you toggle the proxy on/off without touchin
 ```cmd
 Proxy update
 ```
-
-That's it. The command fetches the latest release ZIP from GitHub, extracts it, and re-runs the installer in-place. No duplicate installs — everything always lives in `%LOCALAPPDATA%\WslChromeProxy\`.
 
 ## Uninstall
 
