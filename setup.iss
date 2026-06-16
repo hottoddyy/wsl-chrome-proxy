@@ -1,5 +1,5 @@
 #define AppName      "WSL Chrome Proxy"
-#define AppVersion   "1.3.8"
+#define AppVersion   "1.3.9"
 #define AppPublisher "hottoddyy"
 
 [Setup]
@@ -56,5 +56,6 @@ begin
     end;
   end;
 end;
+
 
 
