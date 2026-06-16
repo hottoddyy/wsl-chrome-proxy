@@ -38,6 +38,34 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ──────────────────────────────────────────────────────────────────────────────
+#  LOGGING + CRASH CAPTURE
+#  The setup EXE runs us with -NoPause, so an unhandled error would otherwise
+#  close the window before it can be read. Log everything to a file and trap any
+#  terminating error so the user (and we) can see exactly what failed.
+# ──────────────────────────────────────────────────────────────────────────────
+$script:LogPath = Join-Path $env:TEMP "wsl-chrome-proxy-install.log"
+if (-not $InstallWslOnly) {
+    try { Start-Transcript -Path $script:LogPath -Force -ErrorAction SilentlyContinue | Out-Null } catch {}
+}
+
+trap {
+    Write-Host ""
+    Write-Host "  !! Installation failed with an unexpected error:" -ForegroundColor Red
+    Write-Host "     $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.InvocationInfo) {
+        Write-Host "     at line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "  A full log was saved to:" -ForegroundColor Yellow
+    Write-Host "     $script:LogPath" -ForegroundColor White
+    Write-Host ""
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+    # Always pause on failure so the error is readable, even under -NoPause (EXE).
+    Read-Host "Press Enter to close"
+    exit 1
+}
+
 # ?????????????????????????????????????????????????????????????????????????????
 #  ELEVATED PHASE  (only reached when -InstallWslOnly is passed)
 #  Installs WSL features + Ubuntu, then exits.
@@ -77,7 +105,11 @@ function Write-Fail {
     Write-Host ""
     Write-Host "  !! $msg" -ForegroundColor Red
     Write-Host ""
-    if (-not $NoPause) { Read-Host "Press Enter to close" }
+    Write-Host "  A full log was saved to: $script:LogPath" -ForegroundColor Yellow
+    Write-Host ""
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+    # Always pause on failure so the error is readable, even under -NoPause (EXE).
+    Read-Host "Press Enter to close"
     exit 1
 }
 
@@ -158,8 +190,12 @@ if (Test-Path -LiteralPath $serverPidPath) {
     }
     Remove-Item -LiteralPath $serverPidPath -Force -ErrorAction SilentlyContinue
 }
-# Stop WSL proxy (kill by script name to catch any port)
-& wsl.exe -d $Distro sh -lc "pkill -f 'local-http-proxy.py' 2>/dev/null; rm -f /tmp/wsl-chrome-proxy/proxy.pid" 2>$null | Out-Null
+# Stop WSL proxy (kill by script name to catch any port). Wrapped because on a
+# brand-new machine wsl.exe may be missing or have no distro yet - that's fine,
+# there's nothing to stop.
+try {
+    & wsl.exe -d $Distro sh -lc "pkill -f 'local-http-proxy.py' 2>/dev/null; rm -f /tmp/wsl-chrome-proxy/proxy.pid" 2>$null | Out-Null
+} catch { }
 
 # A stale netsh portproxy rule (from older versions of this tool) hijacks
 # 127.0.0.1:$ProxyPort ahead of WSL2 localhost forwarding and resets every
@@ -515,4 +551,5 @@ Write-Host "    Proxy stop     stop everything" -ForegroundColor DarkGray
 Write-Host "    Proxy status   show current state" -ForegroundColor DarkGray
 Write-Host "    Proxy update   download and install latest from GitHub" -ForegroundColor DarkGray
 Write-Host ""
+try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
 if (-not $NoPause) { Read-Host "Press Enter to close" }
